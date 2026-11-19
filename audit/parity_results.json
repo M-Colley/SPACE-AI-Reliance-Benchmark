@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-19",
+  "records_compared": 1488,
+  "image_occurrences_compared": 5240,
+  "image_modes": [
+    "RGB",
+    "RGBA"
+  ],
+  "text_order_and_jpeg_payload_parity": true,
+  "parser_cases_compared": 15,
+  "real_api_calls": 0,
+  "limits": "Original evaluate/encode/parser source executed. Original imageio RGB decoding substituted by Pillow RGB decoding. No live API/SDK test or original imageio environment reproduction.",
+  "source_hashes": {
+    "space/evaluate_qas.py": "3f3903178a4c3046f59e04f5a497cb8917fd7b15bcd23d7d7e8d6c5133ff9615",
+    "space/agents/qa_agent.py": "2534c4b698342148530403863fcff90ddff886f5c849fbc2549bbfc3222b32ae",
+    "space/utils/common.py": "80e0247c79833fe65d67ea91a700fd360d90a0c4f5382e17e73064f721c9e39b"
+  }
+}
