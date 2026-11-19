@@ -1,0 +1,27 @@
+{
+  "source_files": [
+    {
+      "category": "MRT_vision",
+      "records": 688,
+      "qas_sha256": "91f65133c8b0b97ef27e0d5a16f64d063de5c10a8116c6aba4010228fcccea57"
+    },
+    {
+      "category": "PTT_vision",
+      "records": 400,
+      "qas_sha256": "6278211ec7aa02a0a26226d59d64d60ea6cfc126590705a18546fa637f921c6d"
+    },
+    {
+      "category": "JLO_vision",
+      "records": 200,
+      "qas_sha256": "bca08f4d51a41defce6c3cd4ba31d0050aaca7f8bfb2c91d65924c665970ab9d"
+    },
+    {
+      "category": "MPFB_vision",
+      "records": 200,
+      "qas_sha256": "0e03b021b30c0395be96db5a28f683ada004c581cd978e4cbfc2e98a2eb350da"
+    }
+  ],
+  "total_records": 1488,
+  "exact_duplicate_records": 0,
+  "note": "All source records retained. Hash checks do not identify option permutations or all shared-layout families."
+}
