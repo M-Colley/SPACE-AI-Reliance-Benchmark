@@ -1,5 +1,5 @@
 """Draft independent SPACE QA adapter. No network calls in audit or tests.
-Not a verified reproduction of the upstream loader. See docs/UPSTREAM.md.
+Adapted upstream QA loading and scoring; see docs/UPSTREAM.md for declared differences.
 """
 import argparse
 import base64
@@ -7,7 +7,11 @@ import concurrent.futures
 import csv
 import hashlib
 import json
-import mimetypes
+import importlib.metadata
+import contextlib
+import io
+from space_adapter import load_question_content
+from vendor.space_functions import parse_answer_from_response
 import os
 import platform
 import re
@@ -64,18 +68,19 @@ def load_pool(root, categories):
     return inputs, keys, files
 
 def content_for(question, root, detail):
+    source = load_question_content(question, root, 'gpt-compat', detail)
+    if isinstance(source, str):
+        source = [source]
+    # Representation-only conversion from the upstream mixed content to Responses.
     content = []
-    for part in question:
-        if part.startswith('IMAGE:'):
-            p = image_path(part, root)
-            mime = mimetypes.guess_type(p.name)[0]
-            if mime not in ('image/png', 'image/jpeg', 'image/webp', 'image/gif'):
-                raise ValueError('Unsupported image type')
-            url = f'data:{mime};base64,' + base64.b64encode(p.read_bytes()).decode('ascii')
-            content.append({'type': 'input_image', 'image_url': url, 'detail': detail})
-        else:
+    for part in source:
+        if isinstance(part, str):
             content.append({'type': 'input_text', 'text': part})
+        else:
+            content.append({'type':'input_image', 'image_url':part['image_url']['url'],
+                            'detail':part['image_url']['detail']})
     return content
+
 
 def build_body(question, root, config):
     # Allowlist: the question alone crosses this interface. No gold-answer argument exists.
@@ -106,6 +111,17 @@ def parse_answer(text):
     if len(set(candidates)) != 1:
         return None, 'conflicting_answers'
     return candidates[0], 'valid'
+
+def upstream_prediction(text):
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            return parse_answer_from_response(text), None
+        except Exception as exc:
+            # Official parser may raise for unusual values (e.g. JSON arrays).
+            return None, type(exc).__name__
+
+def environment_versions():
+    return {p: importlib.metadata.version(p) for p in ('Pillow','numpy')}
 
 def output_text(response):
     return '\n'.join(part.get('text', '') for item in response.get('output', [])
@@ -147,7 +163,7 @@ def git_commit():
     return p.stdout.strip()
 
 def validate_live(cfg):
-    if not cfg['model_settings_verified'] or not cfg['upstream_implementation_checked']:
+    if not cfg['model_settings_verified'] or not cfg['upstream_implementation_checked'] or not cfg.get('failure_policy_approved'):
         raise ValueError('Draft blocked: verify model settings and upstream implementation first.')
     if not cfg['upstream_commit'] or not re.fullmatch(r'[0-9a-f]{40}', cfg['upstream_commit']):
         raise ValueError('Record the actual 40-character upstream commit.')
@@ -189,18 +205,20 @@ def run(root, cfg, args):
     validate_live(cfg)
     commit = git_commit()
     inputs, _, files = load_pool(root, cfg['categories'])
+    if args.phase != 'repeat' and args.repeat_number != 1:
+        raise ValueError('Technical/full runs use repeat-number 1')
     if args.phase == 'technical':
         inputs = [x for cat in cfg['categories'] for x in [y for y in inputs if y['category'] == cat][:2]]
     elif args.phase == 'repeat':
         if not args.candidate_ids or args.repeat_number not in (2,3,4,5):
             raise ValueError('Repeat phase requires frozen candidate IDs and repeat number 2–5.')
         ids = json.loads(Path(args.candidate_ids).read_text())
-        if not isinstance(ids, list) or len(ids) != len(set(ids)) or not set(ids) <= {x['item_id'] for x in inputs}:
+        if not isinstance(ids, list) or not ids or len(ids) != len(set(ids)) or not set(ids) <= {x['item_id'] for x in inputs}:
             raise ValueError('Invalid candidate IDs')
         inputs = [x for x in inputs if x['item_id'] in set(ids)]
     out = HERE / 'runs' / args.run_id
     meta = {'phase': args.phase, 'repeat_number': args.repeat_number, 'config': cfg, 'git_commit': commit,
-            'python': platform.python_version(), 'platform': platform.platform(), 'source_files': files,
+            'python': platform.python_version(), 'platform': platform.platform(), 'dependencies': environment_versions(), 'source_files': files,
             'item_ids': [x['item_id'] for x in inputs],
             'input_content_sha256': digest(canonical([(x['item_id'], digest(canonical(build_body(x['question'],root,cfg)))) for x in inputs]))}
     path = out / 'metadata.json'
@@ -222,7 +240,7 @@ def score(root, cfg, run_id):
         raise ValueError('Source files changed since run')
     rows=[]
     for item_id in meta['item_ids']:
-        path=out/'raw'/(item_id+'.json'); answer=None; status='missing'
+        path=out/'raw'/(item_id+'.json'); answer=None; status='missing'; official=None; parser_error=None; completed=False
         if path.exists():
             r=json.loads(path.read_text());status='request_error'
             if r.get('http_status') == 200:
@@ -230,19 +248,30 @@ def score(root, cfg, run_id):
                     response=json.loads(r['response_text'])
                     status='incomplete_response'
                     if response.get('status') == 'completed':
-                        answer,status=parse_answer(output_text(response))
+                        completed=True
+                        text=output_text(response)
+                        answer,status=parse_answer(text)
+                        official,parser_error=upstream_prediction(text)
                 except (json.JSONDecodeError,TypeError):
                     status='malformed_response'
         rows.append({'item_id':item_id,'category':item_id.rsplit('-',1)[0], 'parsed_answer':answer,
                      'gold_answer':keys[item_id],'status':status,
-                     'correct':int(answer==keys[item_id]) if status=='valid' else ''})
+                     'strict_correct':int(answer==keys[item_id]) if status=='valid' else '',
+                     'completed':completed,'upstream_prediction':official,'upstream_parser_error':parser_error or '',
+                     'upstream_correct':int(official==keys[item_id]) if completed and not parser_error else ''})
     with (out/'scores.csv').open('w',newline='') as f:
         w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
     summary={}
     for cat in meta['config']['categories']:
         rr=[r for r in rows if r['category']==cat]; valid=[r for r in rr if r['status']=='valid']
-        ncorrect=sum(r['correct'] for r in valid)
-        summary[cat]={'n_expected':len(rr),'n_valid':len(valid),'n_correct':ncorrect,
+        ncorrect=sum(r['strict_correct'] for r in valid)
+        done=[r for r in rr if r['completed']]
+        official_correct=sum(r['upstream_correct'] for r in done if r['upstream_correct'] != '')
+        comparable=len(done)==len(rr) and not any(r['upstream_parser_error'] for r in rr)
+        summary[cat]={'n_expected':len(rr),'n_completed':len(done),'n_valid':len(valid),'n_correct':ncorrect,
+          'upstream_accuracy_full_pool':official_correct/len(rr) if comparable and rr else None,
+          'upstream_correct_over_expected_lower_bound':official_correct/len(rr) if rr else None,
+          'upstream_full_pool_reportable':comparable,
           'accuracy_valid_only': ncorrect/len(valid) if valid else None,
           'correct_over_all_expected': ncorrect/len(rr) if rr else None,
           'status_counts':{s:sum(r['status']==s for r in rr) for s in sorted(set(r['status'] for r in rr))}}

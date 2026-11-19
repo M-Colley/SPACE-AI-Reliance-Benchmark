@@ -1,66 +1,70 @@
 # SPACE AI reliability benchmarking
 
-Undergraduate research preparation for a study of human reliance on AI advice.
+**Review version 2 — offline verified; live execution blocked pending model/settings and provenance decisions.** This repository supports preparation of an undergraduate study of human reliance on AI. It is not a completed benchmark or a claim of full reproduction of the published model results.
 
-**Status: preparation draft, not an approved or completed benchmark.** No model snapshot has been selected or verified. This adapter preserves the question array in the local dataset, but is independently written and has NOT yet been compared with SPACE's original loader, model wrapper and scorer. Complete `docs/UPSTREAM.md` before claiming original-loader reuse or starting live testing.
+The implementation adapts the supplied SPACE QA loader logic, reuses the original JPEG encoder and answer parser, and adds independent Responses requests, raw-response archiving and explicit failure accounting. Original licensing notices are in vendor/.
 
-## Scope
+## Scope and methods
 
-Four visual QA datasets: MRT_vision, PTT_vision, JLO_vision and MPFB_vision. The inspected local release contains 688, 400, 200 and 200 records respectively (1,488 total). These are source records, not necessarily independent stimuli. All source records are retained for first-pass benchmarking; image families and option-order variants require separate grouping before pilot selection. Source task labels are not trusted because all four files report `MRT (vision)`; category comes from the source directory.
+The four local files contain MRT_vision 688, PTT_vision 400, JLO_vision 200 and MPFB_vision 200 records: 1,488 total. Category comes from the directory because source task fields are all labelled MRT (vision). All source records are retained for the first pass; they are not assumed to be independent stimulus families. IDs are zero-based row indices, pinned by source-file hashes.
+
+Each request contains one original question with its ordered text and images. No gold label, task metadata, examples, prior question or prior answer is transmitted. Images are decoded to RGB and encoded to JPEG with the original encoder; image detail is low. Responses uses typed text/image content, a necessary interface adaptation from the supplied Chat Completions representation.
+
+Primary scoring uses the extracted official parser and prediction == gold. A separate stricter parser flags ambiguous/unusual outputs but does not silently replace the primary score. Missing/failed requests prevent a complete-pool accuracy claim. See docs/SCORING.md.
 
 ## Files
 
-- `benchmark.py`: offline inventory, independent-question concurrent Responses requests, raw-response logging and local scoring.
-- `config.json`: draft settings; null values and verification flags intentionally block live runs.
-- `docs/PROMPTS.md`: source wording and transformation policy.
-- `docs/SCORING.md`: parsing, errors and denominators.
-- `docs/RUN_PLAN.md`: technical, full-pool and repeated-run stages.
-- `docs/UPSTREAM.md`: unresolved upstream-reuse checklist.
-- `docs/CONFIGURATION.md`: every setting explained.
-- `manifests/`: generated record IDs and hashes, without question text, images or answer keys.
-- `tests/test_protocol.py`: offline tests including a gold-label mutation test.
-- `requirements.txt`: no external packages; uses the Python standard library.
+- benchmark.py: audit, request execution, resume protection and scoring.
+- space_adapter.py: adapted official question-segment loader and local image path handling.
+- vendor/space_functions.py: extracted original JPEG encoder and parser, with Apple notices.
+- config.json: model-specific values intentionally unresolved; live gates remain closed.
+- requirements.txt: exact Pillow/numpy versions used for offline verification.
+- docs/: prompting, scoring, configuration, execution, provenance and upload instructions.
+- manifests/: ID/hash inventory, without question text or answer keys.
+- tests/: offline tests; audit/: source-comparison tools and reports.
 
-## Local setup
+## Installation and offline checks
 
-Keep the dataset outside the repository. Set its location at each command; no personal absolute paths are committed. Python 3.9+ is required. From this repository's directory:
+Use Python 3.12 (offline verified with Python 3.12) in a fresh environment. From the repository root:
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 python benchmark.py audit --data-root /path/to/SPACE_data_release
+python audit/verify_parity.py /path/to/ml-space-benchmark-main /path/to/SPACE_data_release
 ```
 
-Audit makes no API calls. It creates public manifests and a local-only preview in `local/request_preview.json`. Images in the preview are replaced by a placeholder; actual live requests contain image bytes. The preview may contain copyrighted question wording and must not be posted automatically.
+None of these commands calls the model. The last command requires the inspected local upstream source. Tests use mocks; the parity check executes selected original functions and uses Pillow in place of the imageio RGB decoding dependency. See audit/parity_results.json for scope and limitations. Audit generates a local-only request preview containing question wording; do not publish local/.
 
-## Before a live run
+## Model decision and live execution
 
-1. Compare with upstream source and record its commit; reuse its loader or document a reviewed adapter deviation.
-2. Verify a real dated model snapshot and every model-specific parameter. Resolve output token allowance by technical checks, not by forcing an answer-only limit.
-3. Finalise parsing, failure handling, pool scope, and prompt policy. Share model ID, settings and protocol with the supervisor.
-4. Commit code and config in a public GitHub/OSF repository BEFORE live testing. After technical-only changes, freeze and publish the final full-run commit BEFORE the full run.
-5. Put `OPENAI_API_KEY` in the local environment, never in any file submitted to this repository.
-6. Use separate technical and formal run IDs. Do not upload the local dataset, requests, raw responses or keys by dragging the entire working folder into a browser. Browser uploads are not protected by `.gitignore` rules.
+Proposed model family: GPT-6 Astra; exact fixed model ID and settings are awaiting supervisor discussion. config.json deliberately contains null model/reasoning/output-budget values. Do not replace null with a guessed snapshot or mark review flags true to bypass incomplete work.
 
-The draft config cannot run API calls. After all checks, the actual model ID/token limit/upstream commit are entered, flags truthfully updated and `status` changed to `ready`. These are declarations of completed checks, not switches to bypass missing work.
+Before live technical testing: record the upstream commit, confirm model/endpoint/parameter access, agree the no-automatic-retry policy or implement a reviewed recovery policy, commit/publish the code and configuration, and supply OPENAI_API_KEY locally. The actual execution directory must be a Git checkout of the published code, with a clean working tree.
 
 ```sh
+# Paid calls; blocked with the delivered review configuration:
 python benchmark.py run --data-root /path/to/SPACE_data_release --phase technical --run-id technical-001
 python benchmark.py score --data-root /path/to/SPACE_data_release --run-id technical-001
-# Only AFTER final protocol freeze and publication:
+# After technical checks, freeze/publish the final configuration before:
 python benchmark.py run --data-root /path/to/SPACE_data_release --phase full --run-id full-001
 python benchmark.py score --data-root /path/to/SPACE_data_release --run-id full-001
 ```
 
-The run command makes paid API calls. It runs three independent requests concurrently by default; this is NOT the Batch API. It archives each exact request locally (without credentials), raw response text, request ID, configuration, dataset hashes, code commit and environment. Resume with the identical command: already logged items, including failures, are not resubmitted. Do not make a new run ID simply to retry failed items; see the failure policy.
+This uses three concurrent independent ordinary Responses requests, NOT Batch API. The exact request, raw returned text, HTTP/request identifiers, code/config version, dependency versions and source hashes are archived locally. API keys are never archived. Repeat the identical run command to resume: completed, failed and potentially in-flight requests are not silently resubmitted. Run only one process for each run ID. Changed code/config/source/environment blocks resume.
 
-## Provenance and licensing
+Repeated-candidate collection uses `--phase repeat --candidate-ids /path/to/frozen_ids.json --repeat-number 2 --run-id candidates-r2`, then analogous numbers 3, 4, 5. IDs and scientific settings must stay identical. Candidate selection quotas and stability filtering are documented proposals, not implemented final selection procedures.
 
-Source: https://github.com/apple-aiml-research/ml-space-benchmark (redirected from apple/ml-space-benchmark).
-Paper: Ramakrishnan, Wijmans, Krähenbühl and Koltun (2025), Does Spatial Cognition Emerge in Frontier Models?, ICLR.
-The upstream README identifies separate Apple Sample Code and CC-BY-NC-ND data licenses. Review the exact license files and required notices before copying source or redistributing stimuli. No upstream source code, images, complete question text or answer keys are redistributed in this draft. No claim of identical published evaluation settings is made.
+## Publication and licensing
 
-## Limitations
+Publish this review package as a draft now. Publish the final run commit BEFORE the formal run. A public code repository is not the later study preregistration. Do not upload data/, local/, runs/, API keys or human data. A browser upload does not apply .gitignore exclusions automatically.
 
-No API compatibility or cost test has been performed. Exact-duplicate detection is not semantic deduplication. Single-pass record-weighted accuracy is distinct from unique-question accuracy. The strict parser is a proposed local rule, not yet verified against the published scorer. Pilot selection and the five-run stability filter remain to be finalised; repeated-run collection is supported, but the stability-selection script is not implemented here.
+SPACE source: https://github.com/apple-aiml-research/ml-space-benchmark . Paper: Ramakrishnan, Wijmans, Krähenbühl and Koltun (2025), Does Spatial Cognition Emerge in Frontier Models?, ICLR.
+
+Adapted/extracted source is attributed in space_adapter.py and vendor/space_functions.py. Apple license and acknowledgements are retained. Original stimuli and gold keys are not redistributed; obtain them from the official source and review LICENSE_DATA before any redistribution. No license is imposed here that purports to replace Apple's terms.
+
+## Outstanding limitations
+
+Upstream commit is unknown for the downloaded archive (file hashes recorded). No live API, account-access, cost or actual imageio-environment verification has occurred. Dated model availability is unresolved. Network recovery and candidate/stability decisions require review. Independent human piloting, power analysis and Gorilla tasks are outside this repository's current scope.
