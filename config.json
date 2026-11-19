@@ -1,0 +1,15 @@
+{
+  "status": "draft_not_ready_for_full_run",
+  "categories": ["MRT_vision", "PTT_vision", "JLO_vision", "MPFB_vision"],
+  "model_snapshot": null,
+  "reasoning_effort": "medium",
+  "max_output_tokens": null,
+  "image_detail": "high",
+  "concurrency": 3,
+  "timeout_seconds": 180,
+  "upstream_commit": null,
+  "upstream_implementation_checked": false,
+  "model_settings_verified": false,
+  "protocol_version": "draft-1",
+  "parser_version": "unique-json-answer-v1"
+}
